@@ -43,6 +43,7 @@ list(APPEND thirdparty_libraries
 list(APPEND LIBRARY_SOURCES
         src/dummy.cpp
         src/sim/BsplineSE3.cpp
+        src/track/DeepTrack.cpp
         src/track/TrackBase.cpp
         src/track/TrackAruco.cpp
         src/track/TrackDescriptor.cpp
