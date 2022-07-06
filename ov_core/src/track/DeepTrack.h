@@ -24,6 +24,9 @@
 
 #include "TrackBase.h"
 
+#include <torch/script.h>
+#include <torch/torch.h>
+
 namespace ov_core {
 
 /**
@@ -52,15 +55,23 @@ public:
    * @param minpxdist features need to be at least this number pixels away from each other
    */
   explicit DeepTrack(std::unordered_map<size_t, std::shared_ptr<CamBase>> cameras, int numfeats, int numaruco, bool binocular,
-                    HistogramMethod histmethod, int fast_threshold, int gridx, int gridy, int minpxdist)
+                    HistogramMethod histmethod, int fast_threshold, int gridx, int gridy, int minpxdist, std::string model_name)
       : TrackBase(cameras, numfeats, numaruco, binocular, histmethod), threshold(fast_threshold), grid_x(gridx), grid_y(gridy),
-        min_px_dist(minpxdist) {}
+        min_px_dist(minpxdist) { load_model(model_name)}
 
   /**
    * @brief Process a new image
    * @param message Contains our timestamp, images, and camera ids
    */
   void feed_new_camera(const CameraData &message);
+
+  void load_model(std::string model_name){
+  std::string path = "models/" + model_name;
+  model = torch::jit::load(path);
+  model.to(torch::kCUDA);
+  model.eval();
+  std::cout << "model loaded" <<std::endl;
+  }
 
 protected:
   /**
@@ -131,11 +142,17 @@ protected:
   void perform_matching(const std::vector<cv::Mat> &img0pyr, const std::vector<cv::Mat> &img1pyr, std::vector<cv::KeyPoint> &pts0,
                         std::vector<cv::KeyPoint> &pts1, size_t id0, size_t id1, std::vector<uchar> &mask_out);
 
+  
+  void deep_flow_pred( const cv::Mat &img0, const cv::Mat &img1, std::vector<cv::Point2f> &pts0,
+                        std::vector<cv::Point2f> &pts1, std::vector<uchar> mask_klt);
+  
+
   // Parameters for our FAST grid detector
   int threshold;
   int grid_x;
   int grid_y;
 
+  torch::jit::script::Module model;
   // Minimum pixel distance to be "far away enough" to be a different extracted feature
   int min_px_dist;
 

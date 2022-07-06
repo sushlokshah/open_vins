@@ -697,9 +697,12 @@ void DeepTrack::perform_matching(const std::vector<cv::Mat> &img0pyr, const std:
   // Now do KLT tracking to get the valid new points
   std::vector<uchar> mask_klt;
   std::vector<float> error;
-  cv::TermCriteria term_crit = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 20, 0.01);
-  cv::calcOpticalFlowPyrLK(img0pyr, img1pyr, pts0, pts1, mask_klt, error, win_size, pyr_levels, term_crit, cv::OPTFLOW_USE_INITIAL_FLOW);
+  
 
+  // cv::TermCriteria term_crit = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 20, 0.01);
+  
+  // cv::calcOpticalFlowPyrLK(img0pyr, img1pyr, pts0, pts1, mask_klt, error, win_size, pyr_levels, term_crit, cv::OPTFLOW_USE_INITIAL_FLOW);
+  deep_flow_pred(img0pyr.at(0), img1pyr.at(0), pts0, pts1, mask_klt)
   // Normalize these points, so we can then do ransac
   // We don't want to do ransac on distorted image uvs since the mapping is nonlinear
   std::vector<cv::Point2f> pts0_n, pts1_n;
@@ -727,3 +730,62 @@ void DeepTrack::perform_matching(const std::vector<cv::Mat> &img0pyr, const std:
     kpts1.at(i).pt = pts1.at(i);
   }
 }
+
+void DeepTrack::deep_flow_pred( const cv::Mat &img0, const cv::Mat &img1, std::vector<cv::Point2f> &pts0, std::vector<cv::Point2f> &pts1, std::vector<uchar> mask_klt){
+  // Torch model input
+  std::vector<torch::jit::IValue> input;
+  // Mean and std
+  std::vector<double> mean = {0.406, 0.456, 0.485};
+  std::vector<double> std = {0.225, 0.224, 0.229};
+  std::vector<cv::Mat> img0_3channel(3), img1_3channel(3);
+  img0_3channel.at(0) = img0;
+  img0_3channel.at(1) = img0;
+  img0_3channel.at(2) = img0;
+
+  img1_3channel.at(0) = img1;
+  img1_3channel.at(1) = img1;
+  img1_3channel.at(2) = img1;
+
+  cv::Mat color_img0, color_img1;
+  cv.merge(img0_3channel , color_img0);
+  cv.merge(img1_3channel , color_img1);
+  
+  //cv::resize(frame, frame, cv::Size(IMG_SIZE, IMG_SIZE));
+  //frame_copy = frame;
+  img0_3channel.convertTo(img0_3channel, CV_32FC3, 1.0f / 255.0f);
+  img1_3channel.convertTo(img1_3channel, CV_32FC3, 1.0f / 255.0f);
+  // CV2 to Tensor
+  cv::Size s = img0.size()
+  torch::Tensor frame_tensor0 =
+      torch::from_blob(img0_3channel.data, {1, s.height, s.width, 3});
+  frame_tensor0 = frame_tensor0.permute({0, 3, 1, 2});
+  //frame_tensor0 = torch::data::transforms::Normalize<>(mean, std)(frame_tensor0);
+  frame_tensor0 = frame_tensor0.to(torch::kCUDA);
+  input.push_back(frame_tensor0);
+
+  torch::Tensor frame_tensor1 =
+      torch::from_blob(img1_3channel.data, {1, s.height, s.width, 3});
+  frame_tensor1 = frame_tensor1.permute({0, 3, 1, 2});
+  //frame_tensor1 = torch::data::transforms::Normalize<>(mean, std)(frame_tensor1);
+  frame_tensor1 = frame_tensor1.to(torch::kCUDA);
+  input.push_back(frame_tensor1);
+
+  auto flow = model.forward(input).toTensor().detach().to(torch::kCPU);
+  std::cout << typeid(flow).name() << std::endl;
+  //pred = pred.to(torch::kU8);
+  // Tensor -> CV2
+  //cv::Mat output_mat(cv::Size{IMG_SIZE, IMG_SIZE}, CV_8UC1, pred.data_ptr());
+  //cv::cvtColor(output_mat, output_mat, cv::COLOR_GRAY2RGB);
+  //cv::applyColorMap(output_mat, output_mat, cv::COLORMAP_TWILIGHT_SHIFTED);
+  // OVERLAY ORIGINAL FRAME AND PREDICTION
+  // cv::addWeighted(frame_copy, alpha, output_mat, beta, 0.0, dst);
+  // cv::resize(dst, dst, cv::Size(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+  for (size_t i = 0; i < pts0.size(); i++) {
+    pts1.at(i).x = pts0.at(i).x + flow.index({0, pts0.at(i).x, pts0.at(i).y});
+    pts1.at(i).y = pts0.at(i).y + flow.index({1, pts0.at(i).x, pts0.at(i).y});
+    mask_klt.at(i) = 1;
+  }
+}
+
+
+
